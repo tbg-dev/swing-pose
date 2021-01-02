@@ -1,0 +1,6 @@
+[submodule "build"]
+	path = build
+	url = git@github.com:c4a-dev/cpp-build.git
+[submodule "data"]
+	path = data
+	url = git@github.com:c4a-dev/data.git
