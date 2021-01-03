@@ -44,9 +44,7 @@ int BodyFromImage::run(const char* filename)
         auto datumProcessed = opWrapper.emplaceAndPop(imageToProcess);
         if (datumProcessed != nullptr) {
             printKeypoints(datumProcessed);
-            //if (!FLAGS_no_display) {
-            //    display(datumProcessed);
-            //}
+            display(datumProcessed);
         } else {
             LOG_WARN(LGR, "Image could not be processed.");
         }
