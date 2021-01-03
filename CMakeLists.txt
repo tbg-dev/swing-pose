@@ -17,6 +17,12 @@ list(APPEND CMAKE_MODULE_PATH
 include(BuildCommon)
 
 # -----------------------------------------------------------------------------
+# Link models
+# -----------------------------------------------------------------------------
+file(CREATE_LINK ${CONAN_OPENPOSE_ROOT}/models ${PROJECT_ROOT}/models SYMBOLIC)
+
+
+# -----------------------------------------------------------------------------
 # Add libraries
 # -----------------------------------------------------------------------------
 add_c4a_library(pose)
@@ -24,5 +30,4 @@ add_c4a_library(pose)
 # -----------------------------------------------------------------------------
 # Add executables/tests
 # -----------------------------------------------------------------------------
-# TODO: work-in-progress
-# add_subdirectory(test)
+add_subdirectory(test/body_from_image)
