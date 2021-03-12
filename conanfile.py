@@ -9,6 +9,6 @@ class c4aPoseConan(c4aConanFile):
     url = "https://github.com/c4a-dev/pose"
     description = "Pose library built on OpenPose."
     requires = (
-        "c4a-core/0.0.1@c4a-skeleton/stable",
-        "openpose/1.7.0@c4a-skeleton/stable"
+        "c4a_core/0.0.1@tbg-dev/stable",
+        "openpose/1.7.0@tbg-dev/stable"
     )
