@@ -25,32 +25,70 @@ int BodyFromImage::run(const char* filename)
         LOG_TRACE(LGR, "Starting OpenPose demo...");
         const auto opTimer = op::getTimerInit();
 
-        // Configuring OpenPose
-        LOG_TRACE(LGR, "Configuring OpenPose...");
-        op::Wrapper opWrapper{op::ThreadManagerMode::Asynchronous};
-        // Set to single-thread (for sequential processing and/or debugging and/or reducing latency)
-        //if (FLAGS_disable_multi_thread) {
-        //    opWrapper.disableMultiThreading();
-        //}
+        // Create the OpenPose workers
+        const op::WrapperStructPose wrapperStructPose;
+        const auto modelFolder = op::formatAsDirectory(wrapperStructPose.modelFolder.getStdString());
+        const auto scaleAndSizeExtractor = std::make_shared<op::ScaleAndSizeExtractor>(
+            wrapperStructPose.netInputSize, wrapperStructPose.outputSize,
+            wrapperStructPose.scalesNumber, wrapperStructPose.scaleGap);
+        const auto cvMatToOpInput = std::make_shared<op::CvMatToOpInput>(wrapperStructPose.poseModel);
+        const auto cvMatToOpOutput = std::make_shared<op::CvMatToOpOutput>();
+        const auto opOutputToCvMat = std::make_shared<op::OpOutputToCvMat>();
+        const auto poseExtractorNet = std::make_shared<op::PoseExtractorCaffe>(
+            wrapperStructPose.poseModel, modelFolder, wrapperStructPose.gpuNumberStart,
+            wrapperStructPose.heatMapTypes, wrapperStructPose.heatMapScaleMode,
+            wrapperStructPose.addPartCandidates, wrapperStructPose.maximizePositives,
+            wrapperStructPose.protoTxtPath.getStdString(),
+            wrapperStructPose.caffeModelPath.getStdString(),
+            wrapperStructPose.upsamplingRatio, wrapperStructPose.poseMode == op::PoseMode::Enabled,
+            wrapperStructPose.enableGoogleLogging);
+        const auto poseExtractor = std::make_shared<op::PoseExtractor>(poseExtractorNet);
+        const auto poseRenderer = std::make_shared<op::PoseCpuRenderer>(
+            wrapperStructPose.poseModel, wrapperStructPose.renderThreshold,
+            wrapperStructPose.blendOriginalFrame, wrapperStructPose.alphaKeypoint,
+            wrapperStructPose.alphaHeatMap, wrapperStructPose.defaultPartToRender);
 
-        // Starting OpenPose
-        LOG_TRACE(LGR, "Starting thread(s)...");
-        opWrapper.start();
+        poseExtractor->initializationOnThread();
+        poseRenderer->initializationOnThread();
 
-        // Process and display image
-        LOG_DEBUG(LGR, "Processing image: " << filename);
+        // Read the image
         const cv::Mat cvImageToProcess = cv::imread(filename);
         const op::Matrix imageToProcess = OP_CV2OPCONSTMAT(cvImageToProcess);
-        auto datumProcessed = opWrapper.emplaceAndPop(imageToProcess);
-        if (datumProcessed != nullptr) {
-            printKeypoints(datumProcessed);
-            display(datumProcessed);
-        } else {
-            LOG_WARN(LGR, "Image could not be processed.");
-        }
+
+        // Process the image
+        LOG_DEBUG(LGR, "Processing image: " << filename);
+        using TDatum = op::BASE_DATUM;
+        auto datumsPtr = std::make_shared<std::vector<std::shared_ptr<TDatum>>>();
+        datumsPtr->emplace_back();
+        auto& tDatumPtr = datumsPtr->at(0);
+        tDatumPtr = std::make_shared<TDatum>();
+        tDatumPtr->cvInputData = imageToProcess;
+        const op::Point<int> inputSize{tDatumPtr->cvInputData.cols(), tDatumPtr->cvInputData.rows()};
+        std::tie(tDatumPtr->scaleInputToNetInputs, tDatumPtr->netInputSizes, tDatumPtr->scaleInputToOutput,
+                 tDatumPtr->netOutputSize) = scaleAndSizeExtractor->extract(inputSize);
+        tDatumPtr->inputNetData = cvMatToOpInput->createArray(
+                tDatumPtr->cvInputData, tDatumPtr->scaleInputToNetInputs, tDatumPtr->netInputSizes);
+        tDatumPtr->outputData = cvMatToOpOutput->createArray(
+                tDatumPtr->cvInputData, tDatumPtr->scaleInputToOutput, tDatumPtr->netOutputSize);
+        poseExtractor->forwardPass(
+                tDatumPtr->inputNetData, op::Point<int>{tDatumPtr->cvInputData.cols(), tDatumPtr->cvInputData.rows()},
+                tDatumPtr->scaleInputToNetInputs, tDatumPtr->poseNetOutput, tDatumPtr->id);
+        tDatumPtr->poseCandidates = poseExtractor->getCandidatesCopy();
+        tDatumPtr->poseHeatMaps = poseExtractor->getHeatMapsCopy();
+        tDatumPtr->poseKeypoints = poseExtractor->getPoseKeypoints().clone();
+        tDatumPtr->poseScores = poseExtractor->getPoseScores().clone();
+        tDatumPtr->scaleNetToOutput = poseExtractor->getScaleNetToOutput();
+        tDatumPtr->elementRendered = poseRenderer->renderPose(
+                tDatumPtr->outputData, tDatumPtr->poseKeypoints, (float)tDatumPtr->scaleInputToOutput,
+                (float)tDatumPtr->scaleNetToOutput);
+        tDatumPtr->cvOutputData = opOutputToCvMat->formatToCvMat(tDatumPtr->outputData);
 
         // Measuring total time
         op::printTime(opTimer, "OpenPose demo successfully finished. Total time: ", " seconds.", op::Priority::High);
+
+        // Display the result
+        printKeypoints(datumsPtr);
+        display(datumsPtr);
 
         // Return success
         return 0;
