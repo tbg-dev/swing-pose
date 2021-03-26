@@ -6,8 +6,9 @@
 // op forward declares
 //-----------------------------------------------------------------------------
 namespace op {
-    struct Datum;
-    using DatumPtr = std::shared_ptr<op::Datum>;
+    template<typename T>
+    class Array;
+    class Matrix;
 } // namespace op
 
 namespace c4a {
@@ -29,8 +30,8 @@ public:
     int run(const char* filename) override;
 
 private:
-    void display(const std::shared_ptr<std::vector<op::DatumPtr>>& datumsPtr);
-    void printKeypoints(const std::shared_ptr<std::vector<op::DatumPtr>>& datumsPtr);
+    void display(const op::Matrix& cvOutputData);
+    void printKeypoints(const op::Array<float>& poseKeypoints);
 };
 
 } // namespace pose

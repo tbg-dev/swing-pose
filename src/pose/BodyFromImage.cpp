@@ -53,42 +53,40 @@ int BodyFromImage::run(const char* filename)
 
         // Read the image
         const cv::Mat cvImageToProcess = cv::imread(filename);
-        const op::Matrix imageToProcess = OP_CV2OPCONSTMAT(cvImageToProcess);
 
         // Process the image
-        LOG_DEBUG(LGR, "Processing image: " << filename);
-        using TDatum = op::BASE_DATUM;
-        auto datumsPtr = std::make_shared<std::vector<std::shared_ptr<TDatum>>>();
-        datumsPtr->emplace_back();
-        auto& tDatumPtr = datumsPtr->at(0);
-        tDatumPtr = std::make_shared<TDatum>();
-        tDatumPtr->cvInputData = imageToProcess;
-        const op::Point<int> inputSize{tDatumPtr->cvInputData.cols(), tDatumPtr->cvInputData.rows()};
-        std::tie(tDatumPtr->scaleInputToNetInputs, tDatumPtr->netInputSizes, tDatumPtr->scaleInputToOutput,
-                 tDatumPtr->netOutputSize) = scaleAndSizeExtractor->extract(inputSize);
-        tDatumPtr->inputNetData = cvMatToOpInput->createArray(
-                tDatumPtr->cvInputData, tDatumPtr->scaleInputToNetInputs, tDatumPtr->netInputSizes);
-        tDatumPtr->outputData = cvMatToOpOutput->createArray(
-                tDatumPtr->cvInputData, tDatumPtr->scaleInputToOutput, tDatumPtr->netOutputSize);
+        const op::Matrix cvInputData = OP_CV2OPCONSTMAT(cvImageToProcess);
+        const op::Point<int> inputSize{cvInputData.cols(), cvInputData.rows()};
+        std::vector<double> scaleInputToNetInputs;
+        std::vector<op::Point<int>> netInputSizes;
+        double scaleInputToOutput;
+        op::Point<int> netOutputSize;
+        std::tie(scaleInputToNetInputs, netInputSizes, scaleInputToOutput,
+                 netOutputSize) = scaleAndSizeExtractor->extract(inputSize);
+        std::vector<op::Array<float>> inputNetData = cvMatToOpInput->createArray(
+                cvInputData, scaleInputToNetInputs, netInputSizes);
+        op::Array<float> outputData = cvMatToOpOutput->createArray(
+                cvInputData, scaleInputToOutput, netOutputSize);
+        op::Array<float> poseNetOutput;
         poseExtractor->forwardPass(
-                tDatumPtr->inputNetData, op::Point<int>{tDatumPtr->cvInputData.cols(), tDatumPtr->cvInputData.rows()},
-                tDatumPtr->scaleInputToNetInputs, tDatumPtr->poseNetOutput, tDatumPtr->id);
-        tDatumPtr->poseCandidates = poseExtractor->getCandidatesCopy();
-        tDatumPtr->poseHeatMaps = poseExtractor->getHeatMapsCopy();
-        tDatumPtr->poseKeypoints = poseExtractor->getPoseKeypoints().clone();
-        tDatumPtr->poseScores = poseExtractor->getPoseScores().clone();
-        tDatumPtr->scaleNetToOutput = poseExtractor->getScaleNetToOutput();
-        tDatumPtr->elementRendered = poseRenderer->renderPose(
-                tDatumPtr->outputData, tDatumPtr->poseKeypoints, (float)tDatumPtr->scaleInputToOutput,
-                (float)tDatumPtr->scaleNetToOutput);
-        tDatumPtr->cvOutputData = opOutputToCvMat->formatToCvMat(tDatumPtr->outputData);
+                inputNetData, op::Point<int>{cvInputData.cols(), cvInputData.rows()},
+                scaleInputToNetInputs, poseNetOutput);
+        const std::vector<std::vector<std::array<float,3>>> poseCandidates = poseExtractor->getCandidatesCopy();
+        const op::Array<float> poseHeatMaps = poseExtractor->getHeatMapsCopy();
+        const op::Array<float> poseKeypoints = poseExtractor->getPoseKeypoints().clone();
+        const op::Array<float> poseScores = poseExtractor->getPoseScores().clone();
+        const double scaleNetToOutput = poseExtractor->getScaleNetToOutput();
+        const std::pair<int, std::string> elementRendered = poseRenderer->renderPose(
+                outputData, poseKeypoints, (float)scaleInputToOutput,
+                (float)scaleNetToOutput);
+        const op::Matrix cvOutputData = opOutputToCvMat->formatToCvMat(outputData);
 
         // Measuring total time
         op::printTime(opTimer, "OpenPose demo successfully finished. Total time: ", " seconds.", op::Priority::High);
 
         // Display the result
-        printKeypoints(datumsPtr);
-        display(datumsPtr);
+        printKeypoints(poseKeypoints);
+        display(cvOutputData);
 
         // Return success
         return 0;
@@ -101,25 +99,17 @@ int BodyFromImage::run(const char* filename)
 }
 
 //-----------------------------------------------------------------------------
-void BodyFromImage::display(const std::shared_ptr<std::vector<op::DatumPtr>>& datumsPtr)
+void BodyFromImage::display(const op::Matrix& cvOutputData)
 {
     try {
-        // User's displaying/saving/other processing here
-        // datum.cvOutputData: rendered frame with pose or heatmaps
-        // datum.poseKeypoints: Array<float> with the estimated pose
-        if (datumsPtr != nullptr && !datumsPtr->empty()) {
-            // Display image
-            const cv::Mat cvMat = OP_OP2CVCONSTMAT(datumsPtr->at(0)->cvOutputData);
-            if (!cvMat.empty()) {
-                cv::imshow(OPEN_POSE_NAME_AND_VERSION + " - Tutorial C++ API", cvMat);
-                cv::waitKey(0);
-            } else {
-                LOG_WARN(LGR, "Empty cv::Mat as output.");
-            }
+        // Display the image
+        const cv::Mat cvMat = OP_OP2CVCONSTMAT(cvOutputData);
+        if (!cvMat.empty()) {
+            cv::imshow(OPEN_POSE_NAME_AND_VERSION + " - Tutorial C++ API", cvMat);
+            cv::waitKey(0);
         } else {
-            LOG_WARN(LGR, "Nullptr or empty datumsPtr found.");
+            LOG_WARN(LGR, "Empty cv::Mat as output.");
         }
-
     } catch (const std::exception& e) {
         LOG_ERROR(LGR, "Exception: " << e.what());
         op::error(e.what(), __LINE__, __FUNCTION__, __FILE__);
@@ -127,40 +117,11 @@ void BodyFromImage::display(const std::shared_ptr<std::vector<op::DatumPtr>>& da
 }
 
 //-----------------------------------------------------------------------------
-void BodyFromImage::printKeypoints(const std::shared_ptr<std::vector<op::DatumPtr>>& datumsPtr)
+void BodyFromImage::printKeypoints(const op::Array<float>& poseKeypoints)
 {
     try {
-        // Example: How to use the pose keypoints
-        if (datumsPtr != nullptr && !datumsPtr->empty()) {
-            // Alternative 1
-            LOG_INFO(LGR, "Body keypoints: " << datumsPtr->at(0)->poseKeypoints.toString());
-
-            // // Alternative 2
-            // op::opLog(datumsPtr->at(0)->poseKeypoints, op::Priority::High);
-
-            // // Alternative 3
-            // std::cout << datumsPtr->at(0)->poseKeypoints << std::endl;
-
-            // // Alternative 4 - Accesing each element of the keypoints
-            // op::opLog("\nKeypoints:", op::Priority::High);
-            // const auto& poseKeypoints = datumsPtr->at(0)->poseKeypoints;
-            // op::opLog("Person pose keypoints:", op::Priority::High);
-            // for (auto person = 0 ; person < poseKeypoints.getSize(0) ; person++)
-            // {
-            //     op::opLog("Person " + std::to_string(person) + " (x, y, score):", op::Priority::High);
-            //     for (auto bodyPart = 0 ; bodyPart < poseKeypoints.getSize(1) ; bodyPart++)
-            //     {
-            //         std::string valueToPrint;
-            //         for (auto xyscore = 0 ; xyscore < poseKeypoints.getSize(2) ; xyscore++)
-            //             valueToPrint += std::to_string(   poseKeypoints[{person, bodyPart, xyscore}]   ) + " ";
-            //         op::opLog(valueToPrint, op::Priority::High);
-            //     }
-            // }
-            // op::opLog(" ", op::Priority::High);
-        } else {
-            LOG_WARN(LGR, "Nullptr or empty datumsPtr found.");
-        }
-
+        // Print the pose keypoints
+        LOG_INFO(LGR, "Body keypoints: " << poseKeypoints.toString());
     } catch (const std::exception& e) {
         LOG_ERROR(LGR, "Exception: " << e.what());
     }
