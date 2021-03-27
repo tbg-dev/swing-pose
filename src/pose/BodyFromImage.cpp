@@ -13,8 +13,36 @@ namespace c4a {
 namespace pose {
 
 //-----------------------------------------------------------------------------
+template<typename T>
+inline T fastMax(const T a, const T b)
+{
+    return (a > b ? a : b);
+}
+
+//-----------------------------------------------------------------------------
+template<typename T>
+inline T fastMin(const T a, const T b)
+{
+    return (a < b ? a : b);
+}
+
+//-----------------------------------------------------------------------------
+template<class T>
+inline T fastTruncate(T value, T min = 0, T max = 1)
+{
+    return fastMin(max, fastMax(min, value));
+}
+
+//-----------------------------------------------------------------------------
+template<typename T>
+inline int positiveIntRound(const T a)
+{
+    return int(a+0.5f);
+}
+
+//-----------------------------------------------------------------------------
 static void resizeFixedAspectRatio(
-    cv::Mat& resizedCvMat, const cv::Mat& cvMat, const double scaleFactor, const op::Point<int>& targetSize,
+    cv::Mat& resizedCvMat, const cv::Mat& cvMat, const double scaleFactor, const cv::Point& targetSize,
     const int borderMode = cv::BORDER_CONSTANT, const cv::Scalar& borderValue = cv::Scalar{0,0,0})
 {
     try {
@@ -45,40 +73,8 @@ int BodyFromImage::run(const char* filename)
         LOG_TRACE(LGR, "Starting OpenPose demo...");
         const auto opTimer = op::getTimerInit();
 
-        // Create the OpenPose workers
-        const op::WrapperStructPose wrapperStructPose;
-        const auto modelFolder = op::formatAsDirectory(wrapperStructPose.modelFolder.getStdString());
-        const auto poseExtractorNet = std::make_shared<op::PoseExtractorCaffe>(
-            wrapperStructPose.poseModel, modelFolder, wrapperStructPose.gpuNumberStart,
-            wrapperStructPose.heatMapTypes, wrapperStructPose.heatMapScaleMode,
-            wrapperStructPose.addPartCandidates, wrapperStructPose.maximizePositives,
-            wrapperStructPose.protoTxtPath.getStdString(),
-            wrapperStructPose.caffeModelPath.getStdString(),
-            wrapperStructPose.upsamplingRatio, wrapperStructPose.poseMode == op::PoseMode::Enabled,
-            wrapperStructPose.enableGoogleLogging);
-        const auto poseExtractor = std::make_shared<op::PoseExtractor>(poseExtractorNet);
-        const auto poseRenderer = std::make_shared<op::PoseCpuRenderer>(
-            wrapperStructPose.poseModel, wrapperStructPose.renderThreshold,
-            wrapperStructPose.blendOriginalFrame, wrapperStructPose.alphaKeypoint,
-            wrapperStructPose.alphaHeatMap, wrapperStructPose.defaultPartToRender);
-
-        poseExtractor->initializationOnThread();
-        poseRenderer->initializationOnThread();
-
-        // Sanity checks
-        if (wrapperStructPose.netInputSize.x <= 0 && wrapperStructPose.netInputSize.y <= 0)
-            LOG_ERROR(LGR,"Only 1 of the dimensions of net input resolution can be <= 0.");
-        if ((wrapperStructPose.netInputSize.x > 0 && wrapperStructPose.netInputSize.x % 16 != 0)
-            || (wrapperStructPose.netInputSize.y > 0 && wrapperStructPose.netInputSize.y % 16 != 0))
-            LOG_ERROR(LGR, "Net input resolution must be multiples of 16.");
-        if (wrapperStructPose.scalesNumber < 1)
-            LOG_ERROR(LGR, "There must be at least 1 scale.");
-        if (wrapperStructPose.scaleGap <= 0.)
-            LOG_ERROR(LGR, "The gap between scales must be strictly positive.");
-
         // Read the image
         const cv::Mat cvInputData = cv::imread(filename);
-        const op::Point<int> inputSize{cvInputData.cols, cvInputData.rows};
 
         // Sanity checks
         if (cvInputData.empty())
@@ -87,52 +83,46 @@ int BodyFromImage::run(const char* filename)
             LOG_ERROR(LGR, "Input images must be 3-channel BGR.");
 
         // Set poseNetInputSize
-        auto poseNetInputSize = wrapperStructPose.netInputSize;
-        if (poseNetInputSize.x <= 0 || poseNetInputSize.y <= 0) {
-            if (poseNetInputSize.x <= 0)
-                poseNetInputSize.x = 16 * op::positiveIntRound(1 / 16.f * poseNetInputSize.y * inputSize.x / (float)inputSize.y);
-            else // if (poseNetInputSize.y <= 0)
-                poseNetInputSize.y = 16 * op::positiveIntRound(1 / 16.f * poseNetInputSize.x * inputSize.y / (float)inputSize.x);
+        auto poseNetInputSize = cv::Size{-1, 368};
+        if (poseNetInputSize.width <= 0 || poseNetInputSize.height <= 0) {
+            if (poseNetInputSize.width <= 0)
+                poseNetInputSize.width = 16 * positiveIntRound(1 / 16.f * poseNetInputSize.height * cvInputData.cols / (float)cvInputData.rows);
+            else // if (poseNetInputSize.height <= 0)
+                poseNetInputSize.height = 16 * positiveIntRound(1 / 16.f * poseNetInputSize.width * cvInputData.rows / (float)cvInputData.cols);
         }
 
         // scaleInputToNetInputs & netInputSizes - Rescale keeping aspect ratio
-        std::vector<double> scaleInputToNetInputs(wrapperStructPose.scalesNumber, 1.f);
-        std::vector<op::Point<int>> netInputSizes(wrapperStructPose.scalesNumber);
-        for (auto i = 0; i < wrapperStructPose.scalesNumber; i++) {
-            const auto currentScale = 1. - i*wrapperStructPose.scaleGap;
+        const int scalesNumber = 1;
+        const float scaleGap = 0.25f;
+        std::vector<double> scaleInputToNetInputs(scalesNumber, 1.f);
+        std::vector<cv::Point> netInputSizes(scalesNumber);
+        for (auto i = 0; i < scalesNumber; i++) {
+            const auto currentScale = 1. - i*scaleGap;
             if (currentScale < 0. || 1. < currentScale)
                 LOG_ERROR(LGR,"All scales must be in the range [0, 1], i.e., 0 <= 1-scale_number*scale_gap <= 1");
 
-            const auto targetWidth = op::fastTruncate(
-                    op::positiveIntRound(poseNetInputSize.x * currentScale) / 16 * 16, 1, poseNetInputSize.x);
-            const auto targetHeight = op::fastTruncate(
-                    op::positiveIntRound(poseNetInputSize.y * currentScale) / 16 * 16, 1, poseNetInputSize.y);
-            const op::Point<int> targetSize{targetWidth, targetHeight};
-            scaleInputToNetInputs[i] = op::resizeGetScaleFactor(inputSize, targetSize);
-            netInputSizes[i] = targetSize;
+            const auto targetWidth = fastTruncate(
+                    positiveIntRound(poseNetInputSize.width * currentScale) / 16 * 16, 1, poseNetInputSize.width);
+            const auto targetHeight = fastTruncate(
+                    positiveIntRound(poseNetInputSize.height * currentScale) / 16 * 16, 1, poseNetInputSize.height);
+            const auto ratioWidth = (targetWidth - 1) / (double)(cvInputData.cols - 1);
+            const auto ratioHeight = (targetHeight - 1) / (double)(cvInputData.rows - 1);
+            scaleInputToNetInputs[i] = fastMin(ratioWidth, ratioHeight);
+            netInputSizes[i] = cv::Point{targetWidth, targetHeight};
         }
 
         // scaleInputToOutput - Scale between input and desired output size
-        op::Point<int> netOutputSize;
-        double scaleInputToOutput;
-        if (wrapperStructPose.outputSize.x > 0 && wrapperStructPose.outputSize.y > 0) {
-            netOutputSize = wrapperStructPose.outputSize;
-            scaleInputToOutput = op::resizeGetScaleFactor(inputSize, wrapperStructPose.outputSize);
-        } else {
-            netOutputSize = inputSize;
-            scaleInputToOutput = 1.;
-        }
+        cv::Point netOutputSize{cvInputData.cols, cvInputData.rows};
+        double scaleInputToOutput = 1.;
 
         // inputNetData - Rescale keeping aspect ratio and transform to float the input deep net image
-        std::vector<op::Array<float>> inputNetData(wrapperStructPose.scalesNumber);
+        std::vector<op::Array<float>> inputNetData(scalesNumber);
         for (auto i = 0u ; i < inputNetData.size() ; i++) {
             cv::Mat frameWithNetSize;
             resizeFixedAspectRatio(frameWithNetSize, cvInputData, scaleInputToNetInputs[i], netInputSizes[i]);
             // Fill inputNetData[i]
             inputNetData[i].reset({1, 3, netInputSizes.at(i).y, netInputSizes.at(i).x});
-            uCharCvMatToFloatPtr(
-                    inputNetData[i].getPtr(), OP_CV2OPMAT(frameWithNetSize),
-                    (wrapperStructPose.poseModel == op::PoseModel::BODY_19N ? 2 : 1));
+            op::uCharCvMatToFloatPtr(inputNetData[i].getPtr(), OP_CV2OPMAT(frameWithNetSize), 1);
 
             // // OpenCV equivalent
             // const auto scale = 1/255.;
@@ -152,15 +142,145 @@ int BodyFromImage::run(const char* filename)
         frameWithOutputSize.convertTo(OP_OP2CVMAT(outputData.getCvMat()), CV_32FC3);
 
         op::Array<float> poseNetOutput;
-        poseExtractor->forwardPass(inputNetData, inputSize, scaleInputToNetInputs, poseNetOutput);
-        const std::vector<std::vector<std::array<float,3>>> poseCandidates = poseExtractor->getCandidatesCopy();
-        const op::Array<float> poseHeatMaps = poseExtractor->getHeatMapsCopy();
-        const op::Array<float> poseKeypoints = poseExtractor->getPoseKeypoints().clone();
-        const op::Array<float> poseScores = poseExtractor->getPoseScores().clone();
-        const double scaleNetToOutput = poseExtractor->getScaleNetToOutput();
-        const std::pair<int, std::string> elementRendered = poseRenderer->renderPose(
-                outputData, poseKeypoints, (float)scaleInputToOutput,
-                (float)scaleNetToOutput);
+        op::Array<float> poseKeypoints;
+        {
+            const op::Point<int> inputSize{cvInputData.cols, cvInputData.rows};
+            const op::WrapperStructPose wrapperStructPose;
+            const auto modelFolder = op::formatAsDirectory(wrapperStructPose.modelFolder.getStdString());
+            const auto poseExtractorNet = std::make_shared<op::PoseExtractorCaffe>(
+                    wrapperStructPose.poseModel, modelFolder, wrapperStructPose.gpuNumberStart,
+                    wrapperStructPose.heatMapTypes, wrapperStructPose.heatMapScaleMode,
+                    wrapperStructPose.addPartCandidates, wrapperStructPose.maximizePositives,
+                    wrapperStructPose.protoTxtPath.getStdString(),
+                    wrapperStructPose.caffeModelPath.getStdString(),
+                    wrapperStructPose.upsamplingRatio, wrapperStructPose.poseMode == op::PoseMode::Enabled,
+                    wrapperStructPose.enableGoogleLogging);
+            const auto poseExtractor = std::make_shared<op::PoseExtractor>(poseExtractorNet);
+            poseExtractor->initializationOnThread();
+            poseExtractor->forwardPass(inputNetData, inputSize, scaleInputToNetInputs, poseNetOutput);
+            poseKeypoints = poseExtractor->getPoseKeypoints().clone();
+        }
+
+        // Rescale keypoints to output size
+        auto poseKeypointsRescaled = poseKeypoints.clone();
+        if (!poseKeypointsRescaled.empty() && (float)scaleInputToOutput != float(1)) {
+            // Error check
+            if (poseKeypointsRescaled.getSize(2) != 3 && poseKeypointsRescaled.getSize(2) != 4)
+                LOG_ERROR(LGR, "The Array<T> is not a (x,y,score) or (x,y,z,score) format array. This"
+                               " function is only for those 2 dimensions: [sizeA x sizeB x 3or4].");
+            // Get #people and #parts
+            const auto numberPeople = poseKeypointsRescaled.getSize(0);
+            const auto numberParts = poseKeypointsRescaled.getSize(1);
+            const auto xyzChannels = poseKeypointsRescaled.getSize(2);
+            // For each person
+            for (auto person = 0 ; person < numberPeople ; person++) {
+                // For each body part
+                for (auto part = 0 ; part < numberParts ; part++) {
+                    const auto finalIndex = xyzChannels*(person*numberParts + part);
+                    for (auto xyz = 0 ; xyz < xyzChannels-1 ; xyz++)
+                        poseKeypointsRescaled[finalIndex+xyz] *= scaleInputToOutput;
+                }
+            }
+        }
+
+        // Render keypoints
+        if (!outputData.empty()) {
+            // Background
+            const bool blendOriginalFrame = true;
+            if (!blendOriginalFrame)
+                outputData.getCvMat().setTo(0.f); // [0-255]
+
+            // Parameters
+            const auto thicknessCircleRatio = 1.f / 75.f;
+            const auto thicknessLineRatioWRTCircle = 0.75f;
+            const auto &pairs = op::getPoseBodyPartPairsRender(op::PoseModel::BODY_25);
+            const auto &poseScales = op::getPoseScales(op::PoseModel::BODY_25);
+            const auto &colors = op::getPoseColors(op::PoseModel::BODY_25);
+
+            // Array<T> --> cv::Mat
+            auto frame = outputData.getCvMat();
+            cv::Mat cvFrame = OP_OP2CVMAT(frame);
+
+            // Sanity check
+            const std::string errorMessage = "The Array<T> is not a RGB image or 3-channel keypoint array. This function"
+                                             " is only for array of dimension: [sizeA x sizeB x 3].";
+            if (cvFrame.channels() != 3)
+                LOG_ERROR(LGR, errorMessage);
+
+            // Get frame channels
+            const auto width = cvFrame.size[1];
+            const auto height = cvFrame.size[0];
+            const auto area = width * height;
+            cv::Mat frameBGR(height, width, CV_32FC3, cvFrame.data);
+
+            // Parameters
+            const auto lineType = 8;
+            const auto shift = 0;
+            const auto numberColors = colors.size();
+            const auto numberScales = poseScales.size();
+            const auto thresholdRectangle = float(0.1);
+            const auto numberKeypoints = poseKeypoints.getSize(1);
+            const float renderThreshold = 0.05f;
+
+            // Keypoints
+            for (auto person = 0 ; person < poseKeypoints.getSize(0) ; person++) {
+                const auto personRectangle = getKeypointsRectangle(poseKeypoints, person, thresholdRectangle);
+                if (personRectangle.area() > 0) {
+                    const auto ratioAreas = fastMin(
+                            float(1), fastMax(
+                                    personRectangle.width/(float)width, personRectangle.height/(float)height));
+                    // Size-dependent variables
+                    const auto thicknessRatio = fastMax(
+                            positiveIntRound(std::sqrt(area)* thicknessCircleRatio * ratioAreas), 2);
+                    // Negative thickness in cv::circle means that a filled circle is to be drawn.
+                    const auto thicknessCircle = fastMax(1, (ratioAreas > float(0.05) ? thicknessRatio : -1));
+                    const auto thicknessLine = fastMax(
+                            1, positiveIntRound(thicknessRatio * thicknessLineRatioWRTCircle));
+                    const auto radius = thicknessRatio / 2;
+
+                    // Draw lines
+                    for (auto pair = 0u ; pair < pairs.size() ; pair+=2) {
+                        const auto index1 = (person * numberKeypoints + pairs[pair]) * poseKeypoints.getSize(2);
+                        const auto index2 = (person * numberKeypoints + pairs[pair+1]) * poseKeypoints.getSize(2);
+                        if (poseKeypoints[index1+2] > renderThreshold && poseKeypoints[index2+2] > renderThreshold) {
+                            const auto thicknessLineScaled = positiveIntRound(
+                                    thicknessLine * poseScales[pairs[pair+1] % numberScales]);
+                            const auto colorIndex = pairs[pair+1]*3; // Before: colorIndex = pair/2*3;
+                            const cv::Scalar color{
+                                    colors[(colorIndex+2) % numberColors],
+                                    colors[(colorIndex+1) % numberColors],
+                                    colors[colorIndex % numberColors]
+                            };
+                            const cv::Point keypoint1{
+                                    positiveIntRound(poseKeypoints[index1]), positiveIntRound(poseKeypoints[index1+1])};
+                            const cv::Point keypoint2{
+                                    positiveIntRound(poseKeypoints[index2]), positiveIntRound(poseKeypoints[index2+1])};
+                            cv::line(frameBGR, keypoint1, keypoint2, color, thicknessLineScaled, lineType, shift);
+                        }
+                    }
+
+                    // Draw circles
+                    for (auto part = 0 ; part < numberKeypoints ; part++) {
+                        const auto faceIndex = (person * numberKeypoints + part) * poseKeypoints.getSize(2);
+                        if (poseKeypoints[faceIndex+2] > renderThreshold) {
+                            const auto radiusScaled = positiveIntRound(radius * poseScales[part % numberScales]);
+                            const auto thicknessCircleScaled = positiveIntRound(
+                                    thicknessCircle * poseScales[part % numberScales]);
+                            const auto colorIndex = part*3;
+                            const cv::Scalar color{
+                                    colors[(colorIndex+2) % numberColors],
+                                    colors[(colorIndex+1) % numberColors],
+                                    colors[colorIndex % numberColors]
+                            };
+                            const cv::Point center{positiveIntRound(poseKeypoints[faceIndex]),
+                                                   positiveIntRound(poseKeypoints[faceIndex+1])};
+                            cv::circle(frameBGR, center, radiusScaled, color, thicknessCircleScaled, lineType,
+                                       shift);
+                        }
+                    }
+                }
+            }
+        }
 
         cv::Mat cvOutputData;
         const cv::Mat constCvMat = OP_OP2CVCONSTMAT(outputData.getConstCvMat());
