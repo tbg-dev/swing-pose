@@ -11,6 +11,6 @@ message(STATUS "CONAN_LIBS=${CONAN_LIBS}")
 message(STATUS "C4A_LIBS=${C4A_LIBS}")
 target_link_libraries(${PROJECT_NAME}
     ${CONAN_LIBS}
-    ${C4A_LIBS}
+    ${BUILT_LIBS}
     ${Caffe_LINK}
 )

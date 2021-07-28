@@ -38,11 +38,8 @@ message(STATUS "Caffe_LINK=${Caffe_LINK}")
 file(CREATE_LINK ${CONAN_OPENPOSE_ROOT}/models ${PROJECT_ROOT}/models SYMBOLIC)
 
 # -----------------------------------------------------------------------------
-# Add libraries
+# Add libraries/tests
 # -----------------------------------------------------------------------------
-add_c4a_library(pose)
-
-# -----------------------------------------------------------------------------
-# Add executables/tests
-# -----------------------------------------------------------------------------
-add_subdirectory(test/body_from_image)
+add_libs(PREFIX tbg LIBS pose)
+#add_tests()
+add_apps(APPS body_from_image)

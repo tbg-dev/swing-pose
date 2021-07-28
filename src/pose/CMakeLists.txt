@@ -1,4 +1,4 @@
-project (c4a_pose)
+project (tbg_pose)
 
 file(GLOB_RECURSE SRC_CPP *.cpp)
 
