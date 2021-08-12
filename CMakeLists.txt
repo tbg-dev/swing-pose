@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15.0)
 
-project (pose)
+project (tbg-swing-pose)
 
 # -----------------------------------------------------------------------------
 # Build options
@@ -42,4 +42,4 @@ file(CREATE_LINK ${CONAN_OPENPOSE_ROOT}/models ${PROJECT_ROOT}/models SYMBOLIC)
 # -----------------------------------------------------------------------------
 add_libs(PREFIX tbg LIBS pose)
 #add_tests()
-add_apps(APPS body_from_image)
+add_apps(APPS body_from_image swing-pose)
