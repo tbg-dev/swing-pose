@@ -19,6 +19,7 @@ public:
 
     // Execute a class method
     int run(const char* filename) override;
+    int run(cv::Mat image) override;
 };
 
 } // namespace pose

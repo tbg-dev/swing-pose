@@ -1,7 +1,6 @@
 #include "BodyFromImage.h"
 
 #include <c4a/core/log.h>
-#include <opencv2/opencv.hpp>
 
 #include <openpose/flags.hpp>
 #include <openpose/headers.hpp>
@@ -259,12 +258,17 @@ IBodyFromImagePtr IBodyFromImage::create()
 //-----------------------------------------------------------------------------
 int BodyFromImage::run(const char* filename)
 {
+    return run(cv::imread(filename));
+}
+
+//-----------------------------------------------------------------------------
+int BodyFromImage::run(cv::Mat cvInputData)
+{
     try {
         LOG_TRACE(LGR, "Starting OpenPose demo...");
         const auto opTimer = op::getTimerInit();
 
         // Read the image
-        const cv::Mat cvInputData = cv::imread(filename);
         const cv::Size inputSize{cvInputData.cols, cvInputData.rows};
         const double inputAspectRatio = inputSize.aspectRatio();
 

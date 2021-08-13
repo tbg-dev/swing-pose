@@ -117,18 +117,21 @@ int main(int argc, char* argv[])
          //.addAndLink(autovideosink)
          .play();
 
-    cv::namedWindow("frame",1);
+
+    auto bodyFromImage = c4a::pose::IBodyFromImage::create();
+
+    //cv::namedWindow("frame",1);
     int key = -1;
     while(key < 0) {
-        //g_main_iteration(false);
+        pipeline->runIteration();
 
         // TODO: synchronize...
         if (!frameQueue.empty()) {
             // this lags pretty badly even when grabbing frames from webcam
             cv::Mat frame = frameQueue.front();
-            cv::Mat edges;
-            imshow("frame", frame);
-            key = cv::waitKey(30);
+            //imshow("frame", frame);
+            //key = cv::waitKey(30);
+            bodyFromImage->run(frame);
             frameQueue.clear();
         }
     }

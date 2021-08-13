@@ -1,5 +1,6 @@
 #pragma once
 
+#include <opencv2/opencv.hpp>
 #include <memory>
 
 namespace c4a {
@@ -18,6 +19,7 @@ public:
 
     // Run the algorithm
     virtual int run(const char* filename) = 0;
+    virtual int run(cv::Mat image)        = 0;
 
 protected:
     virtual ~IBodyFromImage() { }
